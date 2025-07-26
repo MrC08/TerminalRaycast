@@ -33,6 +33,10 @@ inline int coordsToScreenBufferIndex(int i, int j) {
 	return (i * terminalSize.ws_col + j) * 6;
 }
 
+inline int pixelDifference(valarray<int> a, valarray<int> b) {
+	return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2]);
+}
+
 inline float magnitude(valarray<float> vec) {
 	return sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2]);
 }
@@ -87,7 +91,7 @@ RayHitInfo raycast(RayHitInfo lastRay) {
 	sphere.color = {250.0f, 0.0f, 0.0f};
 
 	float minDist = 9999.0;
-	for (float i = 0.0; i < 65536.0; i += minDist) {
+	for (float i = 0.0; i < 256.0; i += minDist) {
 		// Distance from sphere
 		float dist = distance(ray.pos, sphere.pos) - 1.0;
 		float bias = i / 512.0; // Higher bias the further away the ray is
@@ -150,7 +154,7 @@ float getSunLight(valarray<float> pos, valarray<float> normal) {
 	return sunRay.hitSky ? clamp(pow((dot(normal, sunVec)), 1.25), 0.5, 2.0) : 0.5;
 }
 
-valarray<float> getPixel(int x, int y, valarray<float> pos, valarray<float> rot) {
+valarray<int> getPixel(int x, int y, valarray<float> pos, valarray<float> rot) {
 	RayHitInfo ray;
 	
 	// Get position for ray
@@ -200,7 +204,8 @@ valarray<float> getPixel(int x, int y, valarray<float> pos, valarray<float> rot)
 		color *= sunLightAmount;
 	}
 
-	return color;
+	valarray<int> retArray = {min(255, int(color[0])), min(255, int(color[1])), min(255, int(color[2]))};
+	return retArray;
 }
 
 int main() {
@@ -240,18 +245,71 @@ int main() {
 
 		for (int y = 0; y < terminalSize.ws_row; y++) {
 			for (int x = 0; x < terminalSize.ws_col; x++) {
-				valarray<float> colorTop = getPixel(x * 2, y * 2, camera, rotation);
-				valarray<float> colorBottom = getPixel(x * 2, y * 2 + 1, camera, rotation);
+				valarray<int> colorTopL = getPixel(x * 2, y * 2, camera, rotation);
+				valarray<int> colorBottomL = getPixel(x * 2, y * 2 + 1, camera, rotation);
+				valarray<int> colorTopR = getPixel(x * 2 + 1, y * 2, camera, rotation);
+				valarray<int> colorBottomR = getPixel(x * 2 + 1, y * 2 + 1, camera, rotation);
 
-				int r0 = min(255, int(colorTop[0]));
-				int g0 = min(255, int(colorTop[1]));
-				int b0 = min(255, int(colorTop[2]));
-				int r1 = min(255, int(colorBottom[0]));
-				int g1 = min(255, int(colorBottom[1]));
-				int b1 = min(255, int(colorBottom[2]));
+				string ch = "▄";
+				valarray<int> bg = colorTopL;
+				valarray<int> fg = colorBottomL;
+
+				valarray<int> average = (colorTopL + colorBottomL + colorTopR + colorBottomR) / 4;
+				int averageDifference = (
+					pixelDifference(colorTopL, average) +
+					pixelDifference(colorTopR, average) +
+					pixelDifference(colorBottomL, average) +
+					pixelDifference(colorBottomR, average)
+				) / 4;
+
+				int verticalSplit = (pixelDifference(colorTopL, colorBottomL) + pixelDifference(colorTopL, colorBottomL)) / 2;
+				int horizontalSplit = (pixelDifference(colorTopL, colorTopR) + pixelDifference(colorBottomL, colorBottomR)) / 2;
+				int diagonalSplit = (pixelDifference(colorTopL, colorBottomR) + pixelDifference(colorBottomL, colorTopR)) / 2;
+
+				int topLeft = pixelDifference(colorTopL, average) - 20;
+				int topRight = pixelDifference(colorTopR, average) - 20;
+				int bottomLeft = pixelDifference(colorBottomL, average) - 20;
+				int bottomRight = pixelDifference(colorBottomR, average) - 20;
+
+				int maxDifference = max(
+					verticalSplit, max(
+						horizontalSplit, max(
+							diagonalSplit, max(
+								topLeft, max(
+									topRight, max(
+										bottomLeft, bottomRight
+									)
+								)
+							)
+						)
+					)
+				);
+
+
+				if (topLeft >= maxDifference) {
+					ch = "▘";
+					bg = colorBottomR;
+					fg = colorTopL;
+				} else if (topRight >= maxDifference) {
+					ch = "▝";
+					bg = colorBottomL;
+					fg = colorTopR;
+				} else if (bottomLeft >= maxDifference) {
+					ch = "▖";
+					bg = colorTopR;
+					fg = colorBottomL;
+				} else if (bottomRight >= maxDifference) {
+					ch = "▗";
+					bg = colorTopL;
+					fg = colorBottomR;
+				} else {
+					ch = "▄";
+					bg = colorTopL;
+					fg = colorBottomL;
+				}
 
 				// Construct and print the ANSI code to color the foreground and background, then print a unicode character to make two pixels
-				stringBuffer << "\e[48;2;" << r0 << ";" << g0 << ";" << b0 << "m\e[38;2;" << r1 << ";" << g1 << ";" << b1 << "m▄";
+				stringBuffer << "\e[48;2;" << bg[0] << ";" << bg[1] << ";" << bg[2] << "m\e[38;2;" << fg[0] << ";" << fg[1] << ";" << fg[2] << "m" << ch;
 			}
 		}
 		// Reset color
